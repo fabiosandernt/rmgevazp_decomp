@@ -6,6 +6,46 @@
 
 ---
 
+## 🔴 Problemas Identificados (a corrigir)
+
+### 1. Offset de Semanas no vazoes.rvX
+
+**Descoberta**: O vazoes.rvX do CEPEL está **deslocado de 1 semana** em relação ao PREVS.RVX.
+
+| Semana PREVS.RVX | Semana vazoes.rvX |
+|------------------|-------------------|
+| S1 (atual) | Não incluída |
+| S2 | S1 |
+| S3 | S2 |
+| S4 | S3 |
+| S5 | S4 |
+| S6 | S5 |
+| - | S6 (cenário?) |
+
+**Evidência** (deck GEVAZP_TESTE_SANDER/PREVS):
+- Relatório GEVAZP.REL FURNAS: S1=208, S2=191, S3=181, S4=176, S5=174
+- vazoes.rv1 binário FURNAS: S1=191, S2=181, S3=176, S4=174, S5=233
+
+**Impacto**: Nosso código escreve S1-S6 do PREVS direto, mas deveria escrever S2-S6 e mais um valor.
+
+### 2. MODIF.DAT (PARTIF/VINCR)
+
+Os comandos PARTIF e VINCR modificam a topologia de cascata:
+- **PARTIF NNN PPP JJJ**: Usina NNN usa posto PPP com jusante JJJ
+- **VINCR NNN PPP TTT**: Usina NNN tem posto PPP com vazão total em TTT
+
+**Status**: Lê mas não processa.
+
+### 3. REGRAS.DAT (Postos Artificiais)
+
+Fórmulas para calcular vazões de postos artificiais:
+- Operações: +, -, *, /
+- Funções: VAZ(posto), MAX(), MIN(), SE()
+
+**Status**: Lê mas não processa.
+
+---
+
 ## ✅ Funcionalidades Implementadas
 
 | Item | CEPEL GEVAZP 11 | SANDER GEVAZP | Status |
