@@ -1,0 +1,27 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# Dados
+data/
+*.dat
+*.DAT
+*.rv0
+*.RV0
+*.rel
+*.REL
+
+# Temporários
+/tmp/
+*.tmp
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
