@@ -87,6 +87,11 @@ vaz_total_prevs <- dados$prevs
 historico <- dados$historico
 n_anos <- dim(historico)[3]
 
+# Revisão detectada (para nomes de arquivos)
+revisao <- if (!is.null(dados$rev_info$revisao)) dados$rev_info$revisao else "0"
+vazoes_oficial <- paste0("vazoes.rv", revisao)
+vazoes_sander <- paste0("vazoes_sander.rv", revisao)
+
 cat("\n[RESUMO]\n")
 cat("  Usinas:", length(dadger$codigos), "\n")
 cat("  Cenários:", dadger$n_cenarios, "\n")
@@ -219,7 +224,11 @@ if (modo == "completo") {
   # Modo validação: ler cenários do arquivo oficial
   cat("\n[4.1] Lendo cenários do arquivo oficial (modo validação)...\n")
   
-  con_ref <- file("vazoes.rv0", "rb")
+  if (!file.exists(vazoes_oficial)) {
+    stop("Modo validação requer arquivo ", vazoes_oficial, " gerado pelo GEVAZP oficial")
+  }
+  
+  con_ref <- file(vazoes_oficial, "rb")
   invisible(readBin(con_ref, raw(), n = 10 * 1280))  # Skip até reg 10
   
   # Cada cenário é 1 registro de 320 valores
@@ -231,7 +240,7 @@ if (modo == "completo") {
   close(con_ref)
   
   # Ler probabilidades do oficial
-  con_ref <- file("vazoes.rv0", "rb")
+  con_ref <- file(vazoes_oficial, "rb")
   invisible(readBin(con_ref, raw(), n = 3 * 1280))
   probs_raw <- readBin(con_ref, "double", n = 320, size = 4, endian = "little")
   close(con_ref)
@@ -282,10 +291,10 @@ if (modo == "completo") {
 # =============================================================================
 
 cat("\n", paste(rep("=", 79), collapse=""), "\n")
-cat(" ETAPA 6: ESCRITA DO VAZOES.RV0\n")
+cat(" ETAPA 6: ESCRITA DO VAZOES.RV", toupper(revisao), "\n", sep = "")
 cat(paste(rep("=", 79), collapse=""), "\n")
 
-out_file <- "vazoes_sander.rv0"
+out_file <- vazoes_sander
 con <- file(out_file, "wb")
 
 # ----- Registro 1: Header -----
@@ -306,19 +315,42 @@ writeBin(cod_reg, con, size = 4, endian = "little")
 
 # ----- Registro 3: Parâmetros -----
 cat("[6.3] Escrevendo parâmetros...\n")
-con_ref <- file("vazoes.rv0", "rb")
-invisible(readBin(con_ref, raw(), n = 2 * 1280))
-params <- readBin(con_ref, integer(), n = 320, size = 4, endian = "little")
-close(con_ref)
-writeBin(params, con, size = 4, endian = "little")
+if (file.exists(vazoes_oficial)) {
+  con_ref <- file(vazoes_oficial, "rb")
+  invisible(readBin(con_ref, raw(), n = 2 * 1280))
+  params <- readBin(con_ref, integer(), n = 320, size = 4, endian = "little")
+  close(con_ref)
+} else {
+  # Gerar parâmetros quando não há arquivo oficial
+  # Formato: nsem, ndias[6], mes, ano, dia_sem, ...
+  n_semanas_est <- 6L
+  dias_semana <- c(7L, 7L, 7L, 7L, 7L, 7L)  # 7 dias por semana
+  params <- c(
+    n_semanas_est,
+    dias_semana,
+    as.integer(dadger$mes_inicio),
+    as.integer(dadger$ano_inicio),
+    1L,  # dia da semana
+    rep(0L, 320 - 10)
+  )
+}
+writeBin(as.integer(params), con, size = 4, endian = "little")
 
 # ----- Registro 4: Probabilidades -----
 cat("[6.4] Escrevendo probabilidades...\n")
-con_ref <- file("vazoes.rv0", "rb")
-invisible(readBin(con_ref, raw(), n = 3 * 1280))
-probs_oficial <- readBin(con_ref, raw(), n = 1280)
-close(con_ref)
-writeBin(probs_oficial, con)
+if (file.exists(vazoes_oficial)) {
+  con_ref <- file(vazoes_oficial, "rb")
+  invisible(readBin(con_ref, raw(), n = 3 * 1280))
+  probs_oficial <- readBin(con_ref, raw(), n = 1280)
+  close(con_ref)
+  writeBin(probs_oficial, con)
+} else {
+  # Gerar probabilidades: 6 determinísticas (1.0) + n_cenarios estocásticas
+  probs <- numeric(320)
+  probs[1:6] <- 1.0  # Semanas determinísticas
+  probs[7:(6 + n_cenarios)] <- probabilidades  # Cenários estocásticos
+  writeBin(probs, con, size = 4, endian = "little")
+}
 
 # ----- Registros 5-10: Vazões previstas -----
 cat("[6.5] Escrevendo vazões previstas (6 semanas)...\n")
@@ -330,10 +362,10 @@ for (sem in 1:6) {
 if (modo == "validacao") {
   # Copiar o resto do arquivo oficial
   cat("[6.6] Copiando cenários e ENA do oficial...\n")
-  con_ref <- file("vazoes.rv0", "rb")
+  con_ref <- file(vazoes_oficial, "rb")
   invisible(readBin(con_ref, raw(), n = 10 * 1280))  # Skip até reg 10
   
-  n_registros_restantes <- (file.info("vazoes.rv0")$size / 1280) - 10
+  n_registros_restantes <- (file.info(vazoes_oficial)$size / 1280) - 10
   for (i in 1:n_registros_restantes) {
     reg <- readBin(con_ref, raw(), n = 1280)
     writeBin(reg, con)
@@ -378,63 +410,72 @@ cat(" ETAPA 7: VALIDAÇÃO\n")
 cat(paste(rep("=", 79), collapse=""), "\n")
 
 # Comparar com oficial
-tamanho_oficial <- file.info("vazoes.rv0")$size
+tamanho_oficial <- file.info(vazoes_oficial)$size
 cat("\n[7.1] Comparação de tamanho:\n")
-cat("  CEPEL:", tamanho_oficial, "bytes\n")
-cat("  SANDER:", tamanho_gerado, "bytes\n")
+cat("  CEPEL (", vazoes_oficial, "):", tamanho_oficial, "bytes\n")
+cat("  SANDER (", vazoes_sander, "):", tamanho_gerado, "bytes\n")
 
-if (tamanho_oficial != tamanho_gerado) {
+if (is.na(tamanho_oficial)) {
+  cat("  NOTA: Arquivo oficial não encontrado - pulando comparação\n")
+} else if (tamanho_oficial != tamanho_gerado) {
   cat("  AVISO: Tamanhos diferentes!\n")
   cat("  Diferença:", tamanho_gerado - tamanho_oficial, "bytes\n")
 }
 
-# Comparar vazões previstas
-cat("\n[7.2] Comparação de vazões previstas:\n")
-con1 <- file("vazoes.rv0", "rb")
-con2 <- file(out_file, "rb")
-invisible(readBin(con1, raw(), n = 4 * 1280))
-invisible(readBin(con2, raw(), n = 4 * 1280))
-
-matches_vaz <- 0
-for (sem in 1:6) {
-  v1 <- readBin(con1, integer(), n = 320, size = 4, endian = "little")
-  v2 <- readBin(con2, integer(), n = 320, size = 4, endian = "little")
-  if (all(v1 == v2)) {
-    matches_vaz <- matches_vaz + 1
-  } else {
-    diffs <- sum(v1 != v2)
-    cat("  Semana", sem, ": ", diffs, " diferenças\n")
-  }
-}
-close(con1)
-close(con2)
-
-cat("  Semanas idênticas:", matches_vaz, "/6\n")
-
-# Comparar arquivo completo (se tamanhos iguais)
-if (tamanho_oficial == tamanho_gerado) {
-  cat("\n[7.3] Comparação byte a byte:\n")
-  con1 <- file("vazoes.rv0", "rb")
+# Comparar vazões previstas (só se oficial existir)
+if (!is.na(tamanho_oficial) && tamanho_oficial > 0) {
+  cat("\n[7.2] Comparação de vazões previstas:\n")
+  con1 <- file(vazoes_oficial, "rb")
   con2 <- file(out_file, "rb")
-  d1 <- readBin(con1, raw(), n = tamanho_oficial)
-  d2 <- readBin(con2, raw(), n = tamanho_gerado)
+  invisible(readBin(con1, raw(), n = 4 * 1280))
+  invisible(readBin(con2, raw(), n = 4 * 1280))
+
+  matches_vaz <- 0
+  for (sem in 1:6) {
+    v1 <- readBin(con1, integer(), n = 320, size = 4, endian = "little")
+    v2 <- readBin(con2, integer(), n = 320, size = 4, endian = "little")
+    if (all(v1 == v2)) {
+      matches_vaz <- matches_vaz + 1
+    } else {
+      diffs <- sum(v1 != v2)
+      cat("  Semana", sem, ": ", diffs, " diferenças\n")
+    }
+  }
   close(con1)
   close(con2)
-  
-  diffs <- sum(d1 != d2)
-  cat("  Bytes diferentes:", diffs, "de", tamanho_oficial, "\n")
-  
-  if (diffs == 0) {
-    cat("\n╔═══════════════════════════════════════════════════════════════════════════════╗\n")
-    cat("║               ✓ ARQUIVO 100% IDÊNTICO AO CEPEL!                               ║\n")
-    cat("╚═══════════════════════════════════════════════════════════════════════════════╝\n")
+
+  cat("  Semanas idênticas:", matches_vaz, "/6\n")
+
+  # Comparar arquivo completo (se tamanhos iguais)
+  if (tamanho_oficial == tamanho_gerado) {
+    cat("\n[7.3] Comparação byte a byte:\n")
+    con1 <- file(vazoes_oficial, "rb")
+    con2 <- file(out_file, "rb")
+    d1 <- readBin(con1, raw(), n = tamanho_oficial)
+    d2 <- readBin(con2, raw(), n = tamanho_gerado)
+    close(con1)
+    close(con2)
+    
+    diffs <- sum(d1 != d2)
+    cat("  Bytes diferentes:", diffs, "de", tamanho_oficial, "\n")
+    
+    if (diffs == 0) {
+      cat("\n╔═══════════════════════════════════════════════════════════════════════════════╗\n")
+      cat("║               ✓ ARQUIVO 100% IDÊNTICO AO CEPEL!                               ║\n")
+      cat("╚═══════════════════════════════════════════════════════════════════════════════╝\n")
+    }
   }
+} else {
+  cat("\n[7.2] Comparação com oficial não disponível\n")
+  matches_vaz <- NA
 }
 
 # Resultado final
 cat("\n", paste(rep("=", 79), collapse=""), "\n")
-if (matches_vaz == 6) {
+if (!is.na(matches_vaz) && matches_vaz == 6) {
   cat(" ✓ VAZÕES PREVISTAS: 100% IDÊNTICAS AO CEPEL\n")
+} else if (is.na(matches_vaz)) {
+  cat(" ○ VAZÕES PREVISTAS: Sem arquivo oficial para comparar\n")
 } else {
   cat(" ✗ VAZÕES PREVISTAS: ", matches_vaz, "/6 semanas idênticas\n")
 }

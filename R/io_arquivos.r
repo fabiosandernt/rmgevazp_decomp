@@ -388,13 +388,38 @@ ler_loss <- function(arquivo = "loss.dat") {
 }
 
 # -----------------------------------------------------------------------------
-# 12. RV0 - Lista de arquivos DECOMP
+# 12. RV0/RV1/etc - Lista de arquivos DECOMP (detecta revisão automaticamente)
 # -----------------------------------------------------------------------------
 
-#' Lê arquivo RV0 (lista de arquivos DECOMP)
-#' @param arquivo Caminho para rv0
+#' Detecta qual revisão está disponível (rv0, rv1, rv2, etc)
+#' @param dir_dados Diretório com os arquivos
+#' @return Lista com revisão detectada e nomes dos arquivos
+detectar_revisao <- function(dir_dados = ".") {
+  # Procurar por arquivos de revisão (case insensitive)
+  arquivos <- list.files(dir_dados, pattern = "^rv[0-9]$", ignore.case = TRUE)
+  
+  if (length(arquivos) == 0) {
+    return(list(revisao = NULL, rv_file = NULL, dadger = NULL, prevs = NULL))
+  }
+  
+  # Pegar o primeiro encontrado (geralmente só tem um)
+  rv_file <- arquivos[1]
+  revisao <- gsub("rv", "", tolower(rv_file))
+  
+  # Construir nomes dos arquivos com a revisão detectada
+  list(
+    revisao = revisao,
+    rv_file = rv_file,
+    dadger = paste0("dadger.rv", revisao),
+    prevs = paste0("prevs.rv", revisao),
+    vazoes = paste0("vazoes.rv", revisao)
+  )
+}
+
+#' Lê arquivo RV (lista de arquivos DECOMP)
+#' @param arquivo Caminho para rv0/rv1/etc
 #' @return Lista com caminhos dos arquivos
-ler_rv0 <- function(arquivo = "rv0") {
+ler_rv <- function(arquivo) {
   if (!file.exists(arquivo)) {
     return(NULL)
   }
@@ -412,6 +437,9 @@ ler_rv0 <- function(arquivo = "rv0") {
   arquivos
 }
 
+# Manter compatibilidade com nome antigo
+ler_rv0 <- ler_rv
+
 # -----------------------------------------------------------------------------
 # FUNÇÃO PRINCIPAL - Lê todos os arquivos
 # -----------------------------------------------------------------------------
@@ -427,85 +455,115 @@ ler_todos_arquivos <- function(dir_dados) {
   
   cat("[IO] Lendo arquivos de entrada...\n")
   
+  # Detectar revisão (rv0, rv1, rv2, etc)
+  rev_info <- detectar_revisao(".")
+  if (!is.null(rev_info$revisao)) {
+    dados$revisao <- rev_info$revisao
+    cat("  [INFO] Revisão detectada: RV", toupper(rev_info$revisao), "\n", sep = "")
+  }
+  
+  # Função auxiliar para encontrar arquivo (case insensitive)
+  find_file <- function(nome) {
+    arquivos <- list.files(".", pattern = paste0("^", nome, "$"), ignore.case = TRUE)
+    if (length(arquivos) > 0) arquivos[1] else NULL
+  }
+  
   # CASO.DAT
-  if (file.exists("caso.dat")) {
-    dados$caso <- ler_caso("caso.dat")
+  caso_file <- find_file("caso.dat")
+  if (!is.null(caso_file)) {
+    dados$caso <- ler_caso(caso_file)
     cat("  ✓ caso.dat\n")
   }
   
   # ARQUIVOS.DAT
-  if (file.exists("arquivos.dat")) {
-    dados$arquivos <- ler_arquivos("arquivos.dat")
+  arq_file <- find_file("arquivos.dat")
+  if (!is.null(arq_file)) {
+    dados$arquivos <- ler_arquivos(arq_file)
     cat("  ✓ arquivos.dat\n")
   }
   
   # GEVAZP.DAT
-  if (file.exists("gevazp.dat")) {
-    dados$gevazp_config <- ler_gevazp_dat("gevazp.dat")
+  gevazp_file <- find_file("gevazp.dat")
+  if (!is.null(gevazp_file)) {
+    dados$gevazp_config <- ler_gevazp_dat(gevazp_file)
     cat("  ✓ gevazp.dat\n")
   }
   
   # POSTOS.DAT
-  if (file.exists("postos.dat")) {
-    dados$postos <- ler_postos("postos.dat")
+  postos_file <- find_file("postos.dat")
+  if (!is.null(postos_file)) {
+    dados$postos <- ler_postos(postos_file)
     cat("  ✓ postos.dat (", nrow(dados$postos), " postos)\n", sep = "")
   }
   
   # HIDR.DAT
-  if (file.exists("hidr.dat")) {
-    dados$hidr <- ler_hidr("hidr.dat")
+  hidr_file <- find_file("hidr.dat")
+  if (!is.null(hidr_file)) {
+    dados$hidr <- ler_hidr(hidr_file)
     cat("  ✓ hidr.dat\n")
   }
   
   # VAZOES.DAT
-  if (file.exists("vazoes.dat")) {
+  vazoes_file <- find_file("vazoes.dat")
+  if (!is.null(vazoes_file)) {
     n_postos <- if (!is.null(dados$gevazp_config$arquivo_postos) && 
                     dados$gevazp_config$arquivo_postos == 1) 600 else 320
-    dados$historico <- ler_vazoes("vazoes.dat", n_postos)
+    dados$historico <- ler_vazoes(vazoes_file, n_postos)
     cat("  ✓ vazoes.dat (", dim(dados$historico)[3], " anos)\n", sep = "")
   }
   
-  # PREVS.RV0
-  if (file.exists("prevs.rv0")) {
-    dados$prevs <- ler_prevs("prevs.rv0")
-    cat("  ✓ prevs.rv0\n")
+  # PREVS.RVx (usar revisão detectada)
+  prevs_name <- if (!is.null(rev_info$prevs)) rev_info$prevs else "prevs.rv0"
+  prevs_file <- find_file(prevs_name)
+  if (!is.null(prevs_file)) {
+    dados$prevs <- ler_prevs(prevs_file)
+    cat("  ✓ ", prevs_file, "\n", sep = "")
   }
   
-  # DADGER.RV0
-  if (file.exists("dadger.rv0")) {
-    dados$dadger <- ler_dadger("dadger.rv0")
-    cat("  ✓ dadger.rv0 (", length(dados$dadger$codigos), " usinas)\n", sep = "")
+  # DADGER.RVx (usar revisão detectada)
+  dadger_name <- if (!is.null(rev_info$dadger)) rev_info$dadger else "dadger.rv0"
+  dadger_file <- find_file(dadger_name)
+  if (!is.null(dadger_file)) {
+    dados$dadger <- ler_dadger(dadger_file)
+    cat("  ✓ ", dadger_file, " (", length(dados$dadger$codigos), " usinas)\n", sep = "")
   }
   
   # REGRAS.DAT
-  if (file.exists("regras.dat")) {
-    dados$regras <- ler_regras("regras.dat")
+  regras_file <- find_file("regras.dat")
+  if (!is.null(regras_file)) {
+    dados$regras <- ler_regras(regras_file)
     cat("  ✓ regras.dat\n")
   }
   
   # MODIF.DAT
-  if (file.exists("modif.dat")) {
-    dados$modif <- ler_modif("modif.dat")
+  modif_file <- find_file("modif.dat")
+  if (!is.null(modif_file)) {
+    dados$modif <- ler_modif(modif_file)
     cat("  ✓ modif.dat\n")
   }
   
   # LOSS.DAT
-  if (file.exists("loss.dat")) {
-    dados$loss <- ler_loss("loss.dat")
+  loss_file <- find_file("loss.dat")
+  if (!is.null(loss_file)) {
+    dados$loss <- ler_loss(loss_file)
     cat("  ✓ loss.dat\n")
   }
   
-  # RV0
-  if (file.exists("rv0")) {
-    dados$rv0_lista <- ler_rv0("rv0")
-    cat("  ✓ rv0\n")
+  # RVx (lista de arquivos DECOMP)
+  if (!is.null(rev_info$rv_file)) {
+    dados$rv_lista <- ler_rv(rev_info$rv_file)
+    cat("  ✓ ", rev_info$rv_file, "\n", sep = "")
   }
   
   # GEVAZP.LIC (licença - apenas verificar existência)
-  if (file.exists("gevazp.lic")) {
+  lic_file <- find_file("gevazp.lic")
+  if (!is.null(lic_file)) {
     dados$licenca <- TRUE
     cat("  ✓ gevazp.lic\n")
   }
+  
+  # Guardar info da revisão para uso posterior
+  dados$rev_info <- rev_info
   
   cat("[IO] Leitura concluída\n")
   
