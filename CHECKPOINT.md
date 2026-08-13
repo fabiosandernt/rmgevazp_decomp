@@ -158,3 +158,35 @@ Extraída do relatório `gevazp.rel` (seção "POSTOS A MONTANTE"):
 2. **Extrair topologia automaticamente** - Atualmente usa arquivo pré-extraído em `/tmp/topologia_final3.txt`
 
 3. **Cenários idênticos ao CEPEL** - Modo completo gera cenários estatisticamente coerentes mas não byte-for-byte idênticos (seed/algoritmo diferente)
+
+---
+
+## EXECUÇÃO VIA DOCKER
+
+### Build
+```bash
+cd /home/sander/Projects/rmgevazp_decomp
+docker build -t sander-gevazp-decomp .
+```
+
+### Executar
+```bash
+# Modo validação (100% idêntico ao CEPEL)
+docker run --rm -v D:\GEVAZP_TESTE:/data sander-gevazp-decomp validacao
+
+# Modo completo (cenários próprios)
+docker run --rm -v D:\GEVAZP_TESTE:/data sander-gevazp-decomp completo
+
+# Ajuda
+docker run --rm sander-gevazp-decomp help
+
+# Shell interativo
+docker run --rm -it -v D:\GEVAZP_TESTE:/data sander-gevazp-decomp shell
+```
+
+### Resultado
+```
+MD5 CEPEL:  fe09036662f4da74ccdacb5d5f33e413
+MD5 SANDER: fe09036662f4da74ccdacb5d5f33e413
+✅ ARQUIVOS 100% IDÊNTICOS
+```

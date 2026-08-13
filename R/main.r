@@ -97,27 +97,49 @@ cat("  Postos com previsão:", sum(apply(vaz_total_prevs, 1, sum) > 0), "\n")
 # 1.4 TOPOLOGIA
 cat("\n[1.4] Extraindo topologia de cascata...\n")
 
-# Tentar usar arquivo pré-extraído primeiro (mais confiável)
-if (file.exists("/tmp/topologia_final3.txt")) {
-  cat("  Usando arquivo de topologia pré-extraído...\n")
-  top_lines <- readLines("/tmp/topologia_final3.txt")
-  topologia <- list()
+# Função auxiliar para carregar topologia de arquivo texto
+carregar_topologia_txt <- function(arquivo) {
+  top_lines <- readLines(arquivo)
+  topo <- list()
   for (linha in top_lines) {
     nums <- as.integer(strsplit(trimws(linha), "\\s+")[[1]])
     if (length(nums) >= 2) {
       posto <- nums[1]
       if (posto >= 1 && posto <= 320) {
-        topologia[[as.character(posto)]] <- list(
+        topo[[as.character(posto)]] <- list(
           jusante = nums[2],
           montantes = if (length(nums) > 2) nums[3:length(nums)] else integer(0)
         )
       }
     }
   }
-} else if (file.exists("gevazp.rel")) {
+  topo
+}
+
+# Locais onde procurar o arquivo de topologia (em ordem de prioridade)
+topologia_paths <- c(
+  file.path(script_dir, "..", "data", "topologia_cascata.txt"),  # Projeto local
+  "/app/data/topologia_cascata.txt",                              # Docker
+  "/tmp/topologia_final3.txt",                                    # Temp local
+  "topologia_cascata.txt"                                         # Diretório atual
+)
+
+topologia <- NULL
+for (topo_path in topologia_paths) {
+  if (file.exists(topo_path)) {
+    cat("  Usando arquivo de topologia:", topo_path, "\n")
+    topologia <- carregar_topologia_txt(topo_path)
+    break
+  }
+}
+
+# Se não achou arquivo pré-extraído, tentar extrair do relatório
+if (is.null(topologia) && file.exists("gevazp.rel")) {
   cat("  Extraindo do relatório GEVAZP...\n")
   topologia <- extrair_topologia("gevazp.rel")
-} else {
+}
+
+if (is.null(topologia) || length(topologia) == 0) {
   stop("Não foi possível obter topologia. Execute GEVAZP primeiro para gerar gevazp.rel")
 }
 cat("  Postos na topologia:", length(topologia), "\n")
