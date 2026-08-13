@@ -69,6 +69,8 @@ source_if_exists("io_arquivos.r")
 source_if_exists("parp_functions.r")
 source_if_exists("cenarios_functions.r")
 source_if_exists("ena_topologia_functions.r")
+source_if_exists("regras_parser.r")
+source_if_exists("modif_processor.r")
 
 # =============================================================================
 # ETAPA 1: LEITURA DOS DADOS DE ENTRADA
@@ -99,8 +101,42 @@ cat("  Mês início:", dadger$mes_inicio, "/", dadger$ano_inicio, "\n")
 cat("  Anos histórico:", n_anos, "(1931-", 1930 + n_anos, ")\n")
 cat("  Postos com previsão:", sum(apply(vaz_total_prevs, 1, sum) > 0), "\n")
 
-# 1.4 TOPOLOGIA
-cat("\n[1.4] Extraindo topologia de cascata...\n")
+# 1.4 LEITURA DE REGRAS.DAT
+cat("\n[1.4] Lendo REGRAS.DAT...\n")
+regras <- NULL
+if (exists("ler_regras_completo")) {
+  regras_file <- NULL
+  for (f in c("REGRAS.DAT", "regras.dat", "Regras.dat")) {
+    if (file.exists(f)) { regras_file <- f; break }
+  }
+  if (!is.null(regras_file)) {
+    regras <- ler_regras_completo(regras_file)
+    cat("  Postos artificiais:", length(regras$postos_artificiais), "\n")
+    if (length(regras$postos_artificiais) > 0) {
+      cat("  Postos:", paste(head(regras$postos_artificiais, 10), collapse=", "))
+      if (length(regras$postos_artificiais) > 10) cat(", ...")
+      cat("\n")
+    }
+  }
+}
+
+# 1.5 LEITURA DE MODIF.DAT
+cat("\n[1.5] Lendo MODIF.DAT...\n")
+modif <- NULL
+if (exists("ler_modif_completo")) {
+  modif_file <- NULL
+  for (f in c("MODIF.DAT", "modif.dat", "Modif.dat")) {
+    if (file.exists(f)) { modif_file <- f; break }
+  }
+  if (!is.null(modif_file)) {
+    modif <- ler_modif_completo(modif_file)
+    cat("  PARTIF:", length(modif$partif), "usinas\n")
+    cat("  VINCR:", length(modif$vincr), "usinas\n")
+  }
+}
+
+# 1.6 TOPOLOGIA
+cat("\n[1.6] Extraindo topologia de cascata...\n")
 
 # Função auxiliar para carregar topologia de arquivo texto
 carregar_topologia_txt <- function(arquivo) {
@@ -149,20 +185,82 @@ if (is.null(topologia) || length(topologia) == 0) {
 }
 cat("  Postos na topologia:", length(topologia), "\n")
 
+# 1.7 APLICAR MODIF.DAT NA TOPOLOGIA
+if (!is.null(modif) && exists("aplicar_modif_topologia")) {
+  cat("\n[1.7] Aplicando MODIF.DAT na topologia...\n")
+  topologia <- aplicar_modif_topologia(topologia, modif)
+  cat("  Topologia atualizada\n")
+}
+
+# 1.8 DETECTAR NÚMERO DE SEMANAS DETERMINÍSTICAS
+cat("\n[1.8] Detectando estrutura de semanas...\n")
+n_semanas_det <- 6  # Padrão
+semana_offset <- 1  # Offset: S2 do PREVS -> S1 do vazoes
+
+# Tentar ler do arquivo oficial se existir
+if (file.exists(vazoes_oficial)) {
+  con_ref <- file(vazoes_oficial, "rb")
+  header_oficial <- readBin(con_ref, integer(), n = 320, size = 4, endian = "little")
+  close(con_ref)
+  
+  n_estagios <- header_oficial[2]
+  aberturas <- header_oficial[3:9]
+  
+  # Contar semanas determinísticas (abertura = 1)
+  n_semanas_det <- sum(aberturas[1:min(6, length(aberturas))] == 1)
+  if (n_semanas_det == 0) n_semanas_det <- 4  # Fallback
+  
+  cat("  Semanas determinísticas (do oficial):", n_semanas_det, "\n")
+  cat("  Estrutura aberturas:", paste(aberturas[1:7], collapse=", "), "\n")
+} else {
+  # Tentar detectar do DADGER
+  n_semanas_det <- if (!is.null(dadger$n_semanas)) dadger$n_semanas else 4
+  cat("  Semanas determinísticas (estimado):", n_semanas_det, "\n")
+}
+
 # =============================================================================
-# ETAPA 2: CONVERSÃO TOTAL → INCREMENTAL
+# ETAPA 2: APLICAR REGRAS E CONVERTER PARA INCREMENTAL
 # =============================================================================
 
 cat("\n", paste(rep("=", 79), collapse=""), "\n")
-cat(" ETAPA 2: CONVERSÃO TOTAL → INCREMENTAL\n")
+cat(" ETAPA 2: APLICAR REGRAS E CONVERTER PARA INCREMENTAL\n")
 cat(paste(rep("=", 79), collapse=""), "\n")
 
-vaz_incr_prevs <- converter_para_incremental(vaz_total_prevs, topologia)
+# 2.1 Aplicar offset de semanas (S2-S6 do PREVS -> S1-S5 do vazoes)
+cat("\n[2.1] Aplicando offset de semanas...\n")
+cat("  PREVS tem", ncol(vaz_total_prevs), "semanas\n")
+cat("  Usando semanas", (semana_offset+1), "a", (semana_offset+n_semanas_det), "do PREVS\n")
 
-cat("\n  Verificação (semana 1):\n")
-cat("    Posto 1 (CAMARGOS): total=", vaz_total_prevs[1,1], 
+# Selecionar semanas corretas do PREVS
+if (ncol(vaz_total_prevs) >= semana_offset + n_semanas_det) {
+  vaz_total_para_uso <- vaz_total_prevs[, (semana_offset+1):(semana_offset+n_semanas_det)]
+} else {
+  # Usar todas as semanas disponíveis se não houver suficientes
+  vaz_total_para_uso <- vaz_total_prevs[, 2:min(ncol(vaz_total_prevs), n_semanas_det+1)]
+  cat("  AVISO: PREVS tem menos semanas que necessário\n")
+}
+
+# 2.2 Aplicar regras de postos artificiais
+if (!is.null(regras) && length(regras$postos_artificiais) > 0 && exists("aplicar_regras")) {
+  cat("\n[2.2] Aplicando regras de postos artificiais...\n")
+  vaz_total_para_uso <- aplicar_regras(vaz_total_para_uso, regras, dadger$mes_inicio)
+  cat("  Regras aplicadas para", length(regras$postos_artificiais), "postos\n")
+} else {
+  cat("\n[2.2] Sem regras de postos artificiais a aplicar\n")
+}
+
+# 2.3 Converter para incremental
+cat("\n[2.3] Convertendo para vazão incremental...\n")
+if (!is.null(modif) && exists("converter_para_incremental_com_modif")) {
+  vaz_incr_prevs <- converter_para_incremental_com_modif(vaz_total_para_uso, topologia, modif)
+} else {
+  vaz_incr_prevs <- converter_para_incremental(vaz_total_para_uso, topologia)
+}
+
+cat("  Verificação (semana 1 do vazoes = semana", semana_offset+1, "do PREVS):\n")
+cat("    Posto 1 (CAMARGOS): total=", vaz_total_para_uso[1,1], 
     ", incr=", vaz_incr_prevs[1,1], "\n")
-cat("    Posto 6 (FURNAS):   total=", vaz_total_prevs[6,1], 
+cat("    Posto 6 (FURNAS):   total=", vaz_total_para_uso[6,1], 
     ", incr=", vaz_incr_prevs[6,1], "\n")
 
 # =============================================================================
