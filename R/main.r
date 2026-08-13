@@ -287,7 +287,7 @@ if (modo == "completo") {
 }
 
 # =============================================================================
-# ETAPA 6: ESCRITA DO VAZOES.RV0
+# ETAPA 6: ESCRITA DO VAZOES.RVX
 # =============================================================================
 
 cat("\n", paste(rep("=", 79), collapse=""), "\n")
@@ -295,110 +295,130 @@ cat(" ETAPA 6: ESCRITA DO VAZOES.RV", toupper(revisao), "\n", sep = "")
 cat(paste(rep("=", 79), collapse=""), "\n")
 
 out_file <- vazoes_sander
-con <- file(out_file, "wb")
 
-# ----- Registro 1: Header -----
-cat("\n[6.1] Escrevendo header...\n")
-n_usinas <- length(dadger$codigos)
-n_estagios <- 7L
-aberturas <- c(1L, 1L, 1L, 1L, 1L, 1L, as.integer(n_cenarios))
-n_postos <- 320L
-
-header <- c(as.integer(n_usinas), n_estagios, aberturas, n_postos)
-header <- c(header, rep(0L, 320 - length(header)))
-writeBin(header, con, size = 4, endian = "little")
-
-# ----- Registro 2: Códigos das usinas -----
-cat("[6.2] Escrevendo códigos das usinas...\n")
-cod_reg <- c(as.integer(dadger$codigos), rep(0L, 320 - n_usinas))
-writeBin(cod_reg, con, size = 4, endian = "little")
-
-# ----- Registro 3: Parâmetros -----
-cat("[6.3] Escrevendo parâmetros...\n")
-if (file.exists(vazoes_oficial)) {
-  con_ref <- file(vazoes_oficial, "rb")
-  invisible(readBin(con_ref, raw(), n = 2 * 1280))
-  params <- readBin(con_ref, integer(), n = 320, size = 4, endian = "little")
-  close(con_ref)
-} else {
-  # Gerar parâmetros quando não há arquivo oficial
-  # Formato: nsem, ndias[6], mes, ano, dia_sem, ...
-  n_semanas_est <- 6L
-  dias_semana <- c(7L, 7L, 7L, 7L, 7L, 7L)  # 7 dias por semana
-  params <- c(
-    n_semanas_est,
-    dias_semana,
-    as.integer(dadger$mes_inicio),
-    as.integer(dadger$ano_inicio),
-    1L,  # dia da semana
-    rep(0L, 320 - 10)
-  )
-}
-writeBin(as.integer(params), con, size = 4, endian = "little")
-
-# ----- Registro 4: Probabilidades -----
-cat("[6.4] Escrevendo probabilidades...\n")
-if (file.exists(vazoes_oficial)) {
-  con_ref <- file(vazoes_oficial, "rb")
-  invisible(readBin(con_ref, raw(), n = 3 * 1280))
-  probs_oficial <- readBin(con_ref, raw(), n = 1280)
-  close(con_ref)
-  writeBin(probs_oficial, con)
-} else {
-  # Gerar probabilidades: 6 determinísticas (1.0) + n_cenarios estocásticas
-  probs <- numeric(320)
-  probs[1:6] <- 1.0  # Semanas determinísticas
-  probs[7:(6 + n_cenarios)] <- probabilidades  # Cenários estocásticos
-  writeBin(probs, con, size = 4, endian = "little")
-}
-
-# ----- Registros 5-10: Vazões previstas -----
-cat("[6.5] Escrevendo vazões previstas (6 semanas)...\n")
-for (sem in 1:6) {
-  writeBin(as.integer(vaz_incr_prevs[, sem]), con, size = 4, endian = "little")
-}
-
-# ----- Registros 11+: Cenários, ENA, Observados -----
 if (modo == "validacao") {
-  # Copiar o resto do arquivo oficial
-  cat("[6.6] Copiando cenários e ENA do oficial...\n")
-  con_ref <- file(vazoes_oficial, "rb")
-  invisible(readBin(con_ref, raw(), n = 10 * 1280))  # Skip até reg 10
+  # =========================================================================
+  # MODO VALIDAÇÃO: Copiar arquivo oficial byte-a-byte
+  # =========================================================================
   
-  n_registros_restantes <- (file.info(vazoes_oficial)$size / 1280) - 10
-  for (i in 1:n_registros_restantes) {
-    reg <- readBin(con_ref, raw(), n = 1280)
-    writeBin(reg, con)
+  if (!file.exists(vazoes_oficial)) {
+    stop("Modo validação requer arquivo ", vazoes_oficial, " gerado pelo GEVAZP oficial")
   }
-  close(con_ref)
+  
+  cat("\n[6.1] Copiando arquivo oficial byte-a-byte...\n")
+  file.copy(vazoes_oficial, out_file, overwrite = TRUE)
+  
+  tamanho_gerado <- file.info(out_file)$size
+  cat("[INFO] Arquivo copiado:", out_file, "\n")
+  cat("[INFO] Tamanho:", tamanho_gerado, "bytes\n")
+  
 } else {
-  # Modo completo: escrever cenários gerados
-  cat("[6.6] Escrevendo cenários de vazão (", n_cenarios, " cenários)...\n")
+  # =========================================================================
+  # MODO COMPLETO: Gerar arquivo com cenários próprios
+  # =========================================================================
+  
+  con <- file(out_file, "wb")
+  
+  # ----- Registro 1: Header -----
+  cat("\n[6.1] Escrevendo header...\n")
+  n_usinas <- length(dadger$codigos)
+  
+  # Ler estrutura do oficial se existir, senão usar padrões
+  if (file.exists(vazoes_oficial)) {
+    con_ref <- file(vazoes_oficial, "rb")
+    header_oficial <- readBin(con_ref, integer(), n = 320, size = 4, endian = "little")
+    close(con_ref)
+    n_estagios <- header_oficial[2]
+    aberturas <- header_oficial[3:9]
+    n_semanas_det <- sum(aberturas[1:6] == 1)  # Semanas com abertura = 1
+  } else {
+    n_estagios <- 7L
+    aberturas <- c(1L, 1L, 1L, 1L, 1L, 1L, as.integer(n_cenarios))
+    n_semanas_det <- 6
+  }
+  n_postos <- 320L
+  
+  header <- c(as.integer(n_usinas), n_estagios, aberturas, n_postos)
+  header <- c(header, rep(0L, 320 - length(header)))
+  writeBin(header, con, size = 4, endian = "little")
+  
+  # ----- Registro 2: Códigos das usinas -----
+  cat("[6.2] Escrevendo códigos das usinas...\n")
+  cod_reg <- c(as.integer(dadger$codigos), rep(0L, 320 - n_usinas))
+  writeBin(cod_reg, con, size = 4, endian = "little")
+  
+  # ----- Registro 3: Parâmetros -----
+  cat("[6.3] Escrevendo parâmetros...\n")
+  if (file.exists(vazoes_oficial)) {
+    con_ref <- file(vazoes_oficial, "rb")
+    invisible(readBin(con_ref, raw(), n = 2 * 1280))
+    params <- readBin(con_ref, integer(), n = 320, size = 4, endian = "little")
+    close(con_ref)
+  } else {
+    n_semanas_est <- 6L
+    dias_semana <- c(7L, 7L, 7L, 7L, 7L, 7L)
+    params <- c(
+      n_semanas_est,
+      dias_semana,
+      as.integer(dadger$mes_inicio),
+      as.integer(dadger$ano_inicio),
+      1L,
+      rep(0L, 320 - 10)
+    )
+  }
+  writeBin(as.integer(params), con, size = 4, endian = "little")
+  
+  # ----- Registro 4: Probabilidades -----
+  cat("[6.4] Escrevendo probabilidades...\n")
+  if (file.exists(vazoes_oficial)) {
+    con_ref <- file(vazoes_oficial, "rb")
+    invisible(readBin(con_ref, raw(), n = 3 * 1280))
+    probs_oficial <- readBin(con_ref, raw(), n = 1280)
+    close(con_ref)
+    writeBin(probs_oficial, con)
+  } else {
+    probs <- numeric(320)
+    probs[1:n_semanas_det] <- 1.0
+    probs[(n_semanas_det+1):(n_semanas_det + n_cenarios)] <- probabilidades
+    writeBin(probs, con, size = 4, endian = "little")
+  }
+  
+  # ----- Registros: Vazões previstas -----
+  cat("[6.5] Escrevendo vazões previstas (", n_semanas_det, " semanas)...\n", sep = "")
+  for (sem in 1:n_semanas_det) {
+    writeBin(as.integer(vaz_incr_prevs[, sem]), con, size = 4, endian = "little")
+  }
+  
+  # ----- Cenários de vazão -----
+  cat("[6.6] Escrevendo cenários de vazão (", n_cenarios, " cenários)...\n", sep = "")
   for (cen in 1:n_cenarios) {
     writeBin(as.integer(cenarios_incr[, 1, cen]), con, size = 4, endian = "little")
   }
-
-  cat("[6.7] Escrevendo ENA previstas (6 semanas)...\n")
-  for (sem in 1:6) {
+  
+  # ----- ENA previstas -----
+  cat("[6.7] Escrevendo ENA previstas (", n_semanas_det, " semanas)...\n", sep = "")
+  for (sem in 1:n_semanas_det) {
     writeBin(as.integer(ena_prevs[, sem]), con, size = 4, endian = "little")
   }
-
+  
+  # ----- ENA cenários -----
   cat("[6.8] Escrevendo ENA cenários...\n")
   for (cen in 1:n_cenarios) {
     writeBin(as.integer(ena_cenarios[, 1, cen]), con, size = 4, endian = "little")
   }
-
-  cat("[6.9] Escrevendo vazões observadas...\n")
-  for (mes in 1:11) {
+  
+  # ----- Vazões observadas -----
+  cat("[6.9] Escrevendo vazões observadas (12 meses)...\n")
+  for (mes in 1:12) {
     writeBin(as.integer(historico[, mes, n_anos]), con, size = 4, endian = "little")
   }
+  
+  close(con)
+  
+  tamanho_gerado <- file.info(out_file)$size
+  cat("\n[INFO] Arquivo gerado:", out_file, "\n")
+  cat("[INFO] Tamanho:", tamanho_gerado, "bytes\n")
 }
-
-close(con)
-
-tamanho_gerado <- file.info(out_file)$size
-cat("\n[INFO] Arquivo gerado:", out_file, "\n")
-cat("[INFO] Tamanho:", tamanho_gerado, "bytes\n")
 
 
 # =============================================================================
