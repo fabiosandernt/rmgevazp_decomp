@@ -35,13 +35,23 @@ cat("\n[CONFIG] Diretório:", dir_dados, "\n")
 cat("[CONFIG] Modo:", modo, "\n")
 
 # Carregar funções
-script_dir <- dirname(sub("--file=", "", commandArgs()[grep("--file=", commandArgs())]))
-if (length(script_dir) == 0) script_dir <- "."
+# Detectar diretório do script
+script_dir <- tryCatch({
+  # Quando executado via Rscript
+  args <- commandArgs()
+  file_arg <- grep("--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    dirname(normalizePath(sub("--file=", "", file_arg)))
+  } else {
+    # Fallback para diretório atual
+    getwd()
+  }
+}, error = function(e) getwd())
 
 source_if_exists <- function(f) {
   paths <- c(
     file.path(script_dir, f),
-    file.path("/home/sander/Projects/prevren/execucao_modelos/gevazp/R", f),
+    file.path("/home/sander/Projects/rmgevazp_decomp/R", f),
     f
   )
   for (p in paths) {
@@ -50,10 +60,12 @@ source_if_exists <- function(f) {
       return(TRUE)
     }
   }
+  cat("AVISO: Arquivo não encontrado:", f, "\n")
   FALSE
 }
 
 cat("\n[LOAD] Carregando funções...\n")
+source_if_exists("io_arquivos.r")
 source_if_exists("parp_functions.r")
 source_if_exists("cenarios_functions.r")
 source_if_exists("ena_topologia_functions.r")
@@ -66,23 +78,21 @@ cat("\n", paste(rep("=", 79), collapse=""), "\n")
 cat(" ETAPA 1: LEITURA DOS DADOS DE ENTRADA\n")
 cat(paste(rep("=", 79), collapse=""), "\n")
 
-# 1.1 DADGER.RV0
-cat("\n[1.1] Lendo DADGER.RV0...\n")
-dadger <- ler_dadger("dadger.rv0")
+# Ler todos os arquivos de entrada
+dados <- ler_todos_arquivos(dir_dados)
+
+# Extrair variáveis principais para uso posterior
+dadger <- dados$dadger
+vaz_total_prevs <- dados$prevs
+historico <- dados$historico
+n_anos <- dim(historico)[3]
+
+cat("\n[RESUMO]\n")
 cat("  Usinas:", length(dadger$codigos), "\n")
 cat("  Cenários:", dadger$n_cenarios, "\n")
 cat("  Mês início:", dadger$mes_inicio, "/", dadger$ano_inicio, "\n")
-
-# 1.2 PREVS.RV0
-cat("\n[1.2] Lendo PREVS.RV0...\n")
-vaz_total_prevs <- ler_prevs("prevs.rv0")
+cat("  Anos histórico:", n_anos, "(1931-", 1930 + n_anos, ")\n")
 cat("  Postos com previsão:", sum(apply(vaz_total_prevs, 1, sum) > 0), "\n")
-
-# 1.3 VAZOES.DAT
-cat("\n[1.3] Lendo VAZOES.DAT (histórico)...\n")
-historico <- ler_vazoes_historico("vazoes.dat")
-n_anos <- dim(historico)[3]
-cat("  Anos:", n_anos, "(1931-", 1930 + n_anos, ")\n")
 
 # 1.4 TOPOLOGIA
 cat("\n[1.4] Extraindo topologia de cascata...\n")
